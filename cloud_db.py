@@ -14,6 +14,33 @@ import streamlit as st
 SCHEMA = 'estoque_teste'
 
 
+class SetupError(ValueError):
+    pass
+
+
+def initialization_diagnostic(error):
+    """Mensagens fixas: nunca devolver a excecao, URI ou senha ao navegador."""
+    if isinstance(error, SetupError):
+        return 'TESTE-01: TEST_ADMIN_PASSWORD deve ter ao menos 12 caracteres, no máximo 72 bytes e ser uma senha exclusiva, não o texto de exemplo.'
+    if isinstance(error, FileNotFoundError):
+        return 'TESTE-02: Falta schema.sql ao lado de app.py e cloud_db.py no GitHub. Envie o arquivo do pacote de teste.'
+    state = getattr(error, 'sqlstate', None)
+    detail = str(error).lower()
+    if state == '28P01' or 'password authentication failed' in detail:
+        return 'TESTE-03: O banco recusou a autenticação. Confira a senha do banco na conexão; ela não é a senha do administrador do aplicativo.'
+    if 'tenant or user not found' in detail:
+        return 'TESTE-04: Projeto ou usuário não reconhecido. Copie novamente a URI de Session pooler do projeto de teste no Supabase.'
+    if isinstance(error, psycopg.ProgrammingError) and state is None or isinstance(error, ValueError):
+        return 'TESTE-05: Formato da conexão inválido. Confira TEST_DATABASE_URL e a codificação dos caracteres especiais da senha.'
+    if state == '42501':
+        return 'TESTE-06: A conexão não tem permissão para criar as tabelas de teste. Use a URI administrativa de Session pooler do projeto de teste.'
+    if isinstance(error, psycopg.OperationalError):
+        return 'TESTE-07: Falha de conexão com o banco. Confira se o projeto Supabase está ativo e se a URI usa Session pooler, porta 5432; confira também host, usuário e senha.'
+    if isinstance(error, psycopg.Error):
+        return 'TESTE-08: O PostgreSQL recusou a inicialização das tabelas. Informe este código para verificarmos o schema do teste.'
+    return 'TESTE-09: Falha inesperada na inicialização. Informe este código para continuarmos o diagnóstico.'
+
+
 def setting(name):
     value = os.environ.get(name)
     if value is not None:
@@ -149,7 +176,7 @@ def initialize():
     """Cria apenas o schema de teste; nao importa dados de producao."""
     password = setting('TEST_ADMIN_PASSWORD')
     if len(password) < 12 or len(password.encode('utf-8')) > 72 or password.startswith('SUBSTITUA_'):
-        raise ValueError('Defina TEST_ADMIN_PASSWORD com pelo menos 12 caracteres e ate 72 bytes.')
+        raise SetupError('Invalid initial administrator password')
     raw = raw_connection()
     try:
         raw.execute('SELECT pg_advisory_xact_lock(18092026)')

@@ -1007,8 +1007,8 @@ def inicializar_banco():
         st.stop()
     try:
         cloud_db.initialize()
-    except Exception:
-        st.error("Não foi possível iniciar o banco de teste. Confira a conexão e a senha inicial nos Secrets.")
+    except Exception as exc:
+        st.error(cloud_db.initialization_diagnostic(exc))
         st.stop()
 
 def proximo_recibo(conn=None):
