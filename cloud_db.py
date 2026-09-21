@@ -1,12 +1,15 @@
 """PostgreSQL exclusivo do piloto. Nenhum acesso ao SQLite local."""
 from functools import lru_cache
 import os
+import atexit
+import weakref
 from pathlib import Path
 
 import bcrypt
 import pandas as pd
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
+from psycopg_pool import ConnectionPool
 import sqlglot
 from sqlglot import exp
 import streamlit as st
@@ -51,7 +54,7 @@ def setting(name):
         return ''
 
 
-def raw_connection():
+def connection_config():
     url = setting('TEST_DATABASE_URL')
     if not url:
         raise ValueError('Configure TEST_DATABASE_URL nos Secrets do ambiente de teste.')
@@ -59,10 +62,45 @@ def raw_connection():
     config = conninfo_to_dict(url)
     config.pop('options', None)
     config.update(sslmode='require', connect_timeout='10', application_name='estoque_teste')
-    raw = psycopg.connect(**config, prepare_threshold=None)
+    return config
+
+
+def configure_connection(raw):
     raw.execute('SET search_path TO estoque_teste')
     raw.commit()
+
+
+def raw_connection():
+    raw = psycopg.connect(**connection_config(), prepare_threshold=None)
+    try:
+        configure_connection(raw)
+    except Exception:
+        raw.close()
+        raise
     return raw
+
+
+@st.cache_resource(show_spinner=False)
+def connection_pool():
+    pool = ConnectionPool(
+        kwargs={**connection_config(), 'prepare_threshold': None},
+        min_size=0, max_size=4, timeout=15, max_idle=120, max_lifetime=1800,
+        configure=configure_connection, check=ConnectionPool.check_connection,
+        open=True, name='estoque-teste',
+    )
+    atexit.register(pool.close)
+    return pool
+
+
+def release_connection(raw, pool):
+    # Nunca confirmar trabalho pendente ao devolver a conexao a outro usuario.
+    try:
+        if not raw.closed:
+            raw.rollback()
+    except Exception:
+        raw.close()
+    finally:
+        pool.putconn(raw)
 
 
 @lru_cache(maxsize=512)
@@ -98,11 +136,18 @@ class Cursor:
         self.lastrowid = None
 
     def execute(self, query, params=None):
+        self.connection.ensure_open()
         if query.strip().upper() == 'BEGIN IMMEDIATE':
             # PostgreSQL protege as baixas por UPDATE condicional e bloqueio de linha.
             self.connection.raw.execute('SELECT 1')
             return self
         sql, inserted_id = compile_query(query)
+        if query.lstrip().split(None, 1)[0].upper() == 'SELECT':
+            # Leituras nao precisam dos savepoints usados para recuperar
+            # violacoes de unicidade nas gravacoes do programa legado.
+            self.raw.execute(sql, tuple(params) if params is not None else ())
+            self.lastrowid = None
+            return self
         raw = self.connection.raw
         raw.execute('SAVEPOINT estoque_statement')
         try:
@@ -127,40 +172,58 @@ class Cursor:
         return self.raw.description
 
     def fetchone(self):
+        self.connection.ensure_open()
         return self.raw.fetchone()
 
     def fetchall(self):
+        self.connection.ensure_open()
         return self.raw.fetchall()
 
     def close(self):
         self.raw.close()
 
     def __iter__(self):
+        self.connection.ensure_open()
         return iter(self.raw)
 
 
 class Connection:
-    def __init__(self, raw):
+    def __init__(self, raw, pool=None):
         self.raw = raw
+        self._closed = False
+        self._release = weakref.finalize(self, release_connection, raw, pool) if pool is not None else None
+
+    def ensure_open(self):
+        if self._closed:
+            raise psycopg.InterfaceError('Connection already closed')
 
     def cursor(self):
+        self.ensure_open()
         return Cursor(self)
 
     def execute(self, query, params=None):
         return self.cursor().execute(query, params)
 
     def commit(self):
+        self.ensure_open()
         self.raw.commit()
 
     def rollback(self):
+        self.ensure_open()
         self.raw.rollback()
 
     def close(self):
-        self.raw.close()
+        if not self._closed:
+            self._closed = True
+            if self._release is not None:
+                self._release()
+            else:
+                self.raw.close()
 
 
 def get_conn():
-    return Connection(raw_connection())
+    pool = connection_pool()
+    return Connection(pool.getconn(), pool)
 
 
 def read_sql_query(query, conn, params=None):
@@ -195,12 +258,12 @@ def initialize():
 
 
 def save_setting(key, value):
-    with raw_connection() as raw:
+    with connection_pool().connection() as raw:
         raw.execute('INSERT INTO configuracoes_teste(chave,valor) VALUES(%s,%s) '
                     'ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor', (key, value))
 
 
 def load_setting(key):
-    with raw_connection() as raw:
+    with connection_pool().connection() as raw:
         row = raw.execute('SELECT valor FROM configuracoes_teste WHERE chave=%s', (key,)).fetchone()
         return row[0] if row else None
