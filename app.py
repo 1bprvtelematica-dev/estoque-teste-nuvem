@@ -1080,9 +1080,10 @@ def proximo_recibo(conn=None):
     fechar_conn = conn is None
     if fechar_conn:
         conn = get_conn()
-    conn.execute("UPDATE seq_recibo SET valor=? WHERE id=1 AND valor<?", (RECIBO_SEQ_BASE, RECIBO_SEQ_BASE))
-    conn.execute("UPDATE seq_recibo SET valor=valor+1 WHERE id=1")
-    seq = conn.execute("SELECT valor FROM seq_recibo WHERE id=1").fetchone()[0]
+    seq = conn.execute(
+        "UPDATE seq_recibo SET valor=CASE WHEN valor<? THEN ? ELSE valor END + 1 WHERE id=1 RETURNING valor",
+        (RECIBO_SEQ_BASE, RECIBO_SEQ_BASE),
+    ).fetchone()[0]
     if fechar_conn:
         conn.commit(); conn.close()
     return seq
@@ -1771,9 +1772,7 @@ def editor_recibo_saida(recibo_padrao=""):
             st.session_state["ultimo_recibo_html"] = gerar_html_recibo_saida(num_recibo)
             st.session_state["ultimo_recibo_num"] = num_recibo
             registrar_log(st.session_state["usuario"], f"Editou observações do recibo {num_recibo}")
-            st.success("Observações do recibo atualizadas.")
-            time.sleep(1)
-            st.rerun()
+            confirmar_e_atualizar("Observações do recibo atualizadas.")
 
         st.markdown("##### ↩️ Remover item do recibo")
         opcoes = {}
@@ -1826,9 +1825,7 @@ def editor_recibo_saida(recibo_padrao=""):
                 st.session_state["usuario"],
                 f"Removeu item {item[0]} do recibo {num_recibo} e devolveu ao estoque ID {material_destino[0]}",
             )
-            st.success("Item removido do recibo e devolvido ao estoque.")
-            time.sleep(1)
-            st.rerun()
+            confirmar_e_atualizar("Item removido do recibo e devolvido ao estoque.")
 
         st.markdown("---")
         st.markdown("##### ➕ Adicionar item ao recibo")
@@ -1958,9 +1955,7 @@ def editor_recibo_saida(recibo_padrao=""):
                     st.session_state["usuario"],
                     f"Adicionou material ID {item_add[0]} ao recibo {num_recibo}",
                 )
-                st.success("Item adicionado ao recibo e baixado do estoque.")
-                time.sleep(1)
-                st.rerun()
+                confirmar_e_atualizar("Item adicionado ao recibo e baixado do estoque.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RECIBO HTML
@@ -2397,6 +2392,15 @@ MENU_GRUPOS = [
 if is_admin():
     MENU_GRUPOS += [("Administração", [("👥", "Gerenciar Usuários"), ("💾", "Backup Automático"), ("🧹", "Limpeza de Dados"), ("🛡️", "Auditoria")])]
 
+def navegar_para(pagina):
+    st.session_state["pagina"] = pagina
+
+
+def confirmar_e_atualizar(mensagem):
+    st.session_state["confirmacao_pendente"] = mensagem
+    st.rerun()
+
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-brand">
@@ -2438,9 +2442,8 @@ with st.sidebar:
             extra = "background:rgba(59,130,246,0.20)!important;border-color:rgba(59,130,246,0.45)!important;color:#93c5fd!important;" if ativo else ""
             if extra:
                 st.markdown(f"<style>div[data-testid='element-container']:has(button[key='nav_{label}']) button{{ {extra} }}</style>", unsafe_allow_html=True)
-            if st.button(f"{icon}  {label}", key=f"nav_{label}", use_container_width=True):
-                st.session_state["pagina"] = label
-                st.rerun()
+            st.button(f"{icon}  {label}", key=f"nav_{label}", use_container_width=True,
+                      on_click=navegar_para, args=(label,))
         st.markdown("<hr>", unsafe_allow_html=True)
 
     if st.button("🚪  Sair", use_container_width=True, key="btn_logout"):
@@ -2448,6 +2451,9 @@ with st.sidebar:
         st.rerun()
 
 opcao = st.session_state["pagina"]
+confirmacao = st.session_state.pop("confirmacao_pendente", None)
+if confirmacao:
+    st.success(confirmacao)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GERENCIAR USUÁRIOS
@@ -2496,7 +2502,7 @@ if opcao == "Gerenciar Usuários":
             if ok:
                 conn = get_conn(); conn.execute("DELETE FROM usuarios WHERE usuario=?", (ud,)); conn.commit(); conn.close()
                 registrar_log(st.session_state["usuario"], f"Excluiu: {ud}")
-                st.success("Removido!"); time.sleep(1); st.rerun()
+                confirmar_e_atualizar("Removido!")
 
     with t3:
         conn = get_conn()
@@ -2548,8 +2554,7 @@ if opcao == "Gerenciar Usuários":
                         conn.execute("DELETE FROM solicitacoes_usuarios WHERE id=?", (solicitacao["id"],))
                         conn.commit()
                         registrar_log(st.session_state["usuario"], f"Aprovou usuario: {row[0]} como {perfil_aprovado}")
-                        st.success("Usuario aprovado.")
-                        time.sleep(1); st.rerun()
+                        confirmar_e_atualizar("Usuario aprovado.")
                     except psycopg.IntegrityError:
                         conn.execute("DELETE FROM solicitacoes_usuarios WHERE id=?", (solicitacao["id"],))
                         conn.commit()
@@ -2561,8 +2566,7 @@ if opcao == "Gerenciar Usuários":
                 conn.execute("DELETE FROM solicitacoes_usuarios WHERE id=?", (solicitacao["id"],))
                 conn.commit(); conn.close()
                 registrar_log(st.session_state["usuario"], f"Rejeitou solicitacao de usuario: {solicitacao['usuario']}")
-                st.success("Solicitacao rejeitada.")
-                time.sleep(1); st.rerun()
+                confirmar_e_atualizar("Solicitacao rejeitada.")
 
     with t5:
         conn = get_conn()
@@ -2594,7 +2598,7 @@ if opcao == "Gerenciar Usuários":
                         st.success("Senha redefinida.")
                     else:
                         st.error("Usuario nao encontrado. Pedido removido.")
-                    time.sleep(1); st.rerun()
+                    st.rerun()
                 conn.close()
 
             if c_rejeitar_reset.button("Rejeitar redefinicao", use_container_width=True, key="btn_rejeitar_redef_senha"):
@@ -2602,8 +2606,7 @@ if opcao == "Gerenciar Usuários":
                 conn.execute("DELETE FROM solicitacoes_senha WHERE id=?", (pedido_reset["id"],))
                 conn.commit(); conn.close()
                 registrar_log(st.session_state["usuario"], f"Rejeitou redefinicao de senha: {pedido_reset['usuario']}")
-                st.success("Pedido rejeitado.")
-                time.sleep(1); st.rerun()
+                confirmar_e_atualizar("Pedido rejeitado.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BACKUP AUTOMÁTICO
@@ -2648,8 +2651,7 @@ elif opcao == "Limpeza de Dados":
                 total = limpar_dados_cadastro(opcoes_limpeza)
                 registrar_log(st.session_state["usuario"], f"Limpou dados de cadastro: {', '.join(opcoes_limpeza)} ({total} registro(s))")
                 st.session_state["confirmar_limpeza_dados"] = False
-                st.success(f"Limpeza concluída. {total} registro(s) apagado(s).")
-                time.sleep(1); st.rerun()
+                confirmar_e_atualizar(f"Limpeza concluída. {total} registro(s) apagado(s).")
         if c_cancel.button("Cancelar", use_container_width=True, key="btn_cancelar_limpeza"):
             st.session_state["confirmar_limpeza_dados"] = False
             st.rerun()
@@ -2887,7 +2889,7 @@ elif opcao == "Busca e Gerenciamento":
                                              norg.strip().upper(), no, nlinha.strip().upper(), nimei_chip.strip().upper(), mp[sel]))
                                         conn.commit(); conn.close(); conn = None
                                         registrar_log(st.session_state["usuario"], f"Editou material ID {mp[sel]}")
-                                        st.success("Atualizado!"); st.rerun()
+                                        confirmar_e_atualizar("Atualizado!")
                                     except psycopg.IntegrityError:
                                         st.error("Não foi possível atualizar: patrimônio, série, IMEI, número da linha ou IMEI do chip já existe em outro material.")
                                     finally:
@@ -2916,7 +2918,7 @@ elif opcao == "Busca e Gerenciamento":
                         else:
                             conn.execute("DELETE FROM materiais WHERE id=?", (md[sd],)); conn.commit(); conn.close()
                             registrar_log(st.session_state["usuario"], f"Excluiu: {sd}")
-                            st.success("Excluído!"); st.rerun()
+                            confirmar_e_atualizar("Excluído!")
 
         if b:
             st.markdown("---")
@@ -2958,14 +2960,14 @@ elif opcao == "Busca e Gerenciamento":
                     conn = get_conn()
                     conn.execute("UPDATE clientes SET nome=?,doc_fiscal=?,campo_re=?,telefone=?,email=? WHERE id=?",
                                  (nn, nd, nr, nt, ne, dc["id"]))
-                    conn.commit(); conn.close(); st.success("Atualizado!"); time.sleep(1); st.rerun()
+                    conn.commit(); conn.close(); confirmar_e_atualizar("Atualizado!")
             if is_admin() and st.button("🗑️ Excluir Cliente", key="del_c"):
                 if possui_movimentacao_entidade(dc["nome"]):
                     st.error("Cliente possui movimentação no histórico e não pode ser excluído.")
                 else:
                     conn = get_conn(); conn.execute("DELETE FROM clientes WHERE id=?", (dc["id"],)); conn.commit(); conn.close()
                     registrar_log(st.session_state["usuario"], f"Excluiu cliente: {dc['nome']}")
-                    st.success("Excluído!"); st.rerun()
+                    confirmar_e_atualizar("Excluído!")
 
     # ── Fornecedores ──────────────────────────────────────────────────────────
     with tf:
@@ -2996,14 +2998,14 @@ elif opcao == "Busca e Gerenciamento":
                     conn = get_conn()
                     conn.execute("UPDATE fornecedores SET nome=?,telefone=?,cnpj=?,endereco=?,ramo=?,email=? WHERE id=?",
                                  (nf, tf2, nc, en, ra, em, df2["id"]))
-                    conn.commit(); conn.close(); st.success("Atualizado!"); time.sleep(1); st.rerun()
+                    conn.commit(); conn.close(); confirmar_e_atualizar("Atualizado!")
             if is_admin() and st.button("🗑️ Excluir Fornecedor", key="del_f"):
                 if possui_movimentacao_entidade(df2["nome"]):
                     st.error("Fornecedor possui movimentação no histórico e não pode ser excluído.")
                 else:
                     conn = get_conn(); conn.execute("DELETE FROM fornecedores WHERE id=?", (df2["id"],)); conn.commit(); conn.close()
                     registrar_log(st.session_state["usuario"], f"Excluiu fornecedor: {df2['nome']}")
-                    st.success("Excluído!"); st.rerun()
+                    confirmar_e_atualizar("Excluído!")
 
     # ── Órgãos ───────────────────────────────────────────────────────────────
     with to:
@@ -3046,7 +3048,7 @@ elif opcao == "Busca e Gerenciamento":
                             )
                             conn.commit(); conn.close(); conn = None
                             registrar_log(st.session_state["usuario"], f"Editou órgão: {org['nome']} -> {nome_orgao}")
-                            st.success("Órgão atualizado!"); st.rerun()
+                            confirmar_e_atualizar("Órgão atualizado!")
                         except psycopg.IntegrityError:
                             st.error("Já existe um órgão cadastrado com esse nome.")
                         finally:
@@ -3376,7 +3378,7 @@ elif opcao == "Registrar Entrada":
                             else:
                                 st.session_state["entradas_temp"].append(novo_item)
                         st.session_state["reset_form_entrada_item"] = reset_entrada + 1
-                        st.success(f"{md[1]} adicionado!"); st.rerun()
+                        confirmar_e_atualizar(f"{md[1]} adicionado!")
 
         else:
             st.info("Nenhum material encontrado. Cadastre o material base primeiro.")
@@ -3486,7 +3488,7 @@ elif opcao == "Registrar Entrada":
                               f"Entrada de {len(st.session_state['entradas_temp'])} item(ns) de {forn_sel}")
                 st.session_state["entradas_temp"] = []
                 st.session_state["busca_mat_entrada"] = ""
-                st.success("✅ Entradas registradas!"); time.sleep(1); st.rerun()
+                confirmar_e_atualizar("✅ Entradas registradas!")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRAR SAÍDA
@@ -3647,8 +3649,7 @@ elif opcao == "Registrar Saída":
                 st.warning("Este item já está no carrinho aguardando confirmação.")
             else:
                 adicionar_item_carrinho(d_it, qtd_s)
-                st.success(f"'{d_it['nome']}' adicionado/atualizado no carrinho.")
-                st.rerun()
+                confirmar_e_atualizar(f"'{d_it['nome']}' adicionado/atualizado no carrinho.")
 
         st.caption("Seleção múltipla: marque vários itens abaixo e envie todos para o carrinho de uma vez.")
         multi_saida_key = f"itens_saida_multi_{saida_form_seq}_{st.session_state.get('multi_saida_seq', 0)}"
@@ -3770,7 +3771,7 @@ elif opcao == "Registrar Saída":
             st.session_state["carrinho"] = []
             st.session_state["saida_form_seq"] = saida_form_seq + 1
             st.session_state["multi_saida_seq"] = st.session_state.get("multi_saida_seq", 0) + 1
-            st.success(f"✅ Saída registrada! Recibo Nº {nr}"); st.rerun()
+            confirmar_e_atualizar(f"✅ Saída registrada! Recibo Nº {nr}")
 
     if st.session_state.get("ultimo_recibo_html"):
         st.markdown("---"); st.subheader("🖨️ Recibo Gerado")
@@ -3902,8 +3903,7 @@ elif opcao == "Histórico e Recibos":
                                 conn.execute("UPDATE seq_recibo SET valor=? WHERE id=1", (seq_atual,))
                             conn.commit(); conn.close()
                             registrar_log(st.session_state["usuario"], f"Excluiu {total} movimentacao(oes) do tipo {tipo_del}")
-                            st.success(f"{total} movimentação(ões) excluída(s).")
-                            time.sleep(1); st.rerun()
+                            confirmar_e_atualizar(f"{total} movimentação(ões) excluída(s).")
 
     st.markdown("---")
     st.subheader("🖨️ Buscar e Reemitir Recibo")
@@ -3979,7 +3979,7 @@ elif opcao == "Histórico e Recibos":
                 )
                 conn.commit(); conn.close()
                 registrar_log(st.session_state["usuario"], f"Editou observações do recibo {nr_sel}")
-                st.success("Observações atualizadas!"); st.rerun()
+                confirmar_e_atualizar("Observações atualizadas!")
 
             html_r = gerar_html_recibo_saida(nr_sel)
             if html_r:
