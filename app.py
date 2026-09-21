@@ -20,7 +20,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 st.set_page_config(
     page_title="TESTE — Controle de Estoque",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -994,6 +994,71 @@ def inject_css():
     """, unsafe_allow_html=True)
 
 inject_css()
+
+# Layout de celular sem depender das larguras calculadas pelo Streamlit no desktop.
+st.markdown("""
+<style>
+.st-key-login_panel { width: 100%; max-width: 480px; margin-inline: auto; }
+[data-testid="stColumn"], [data-testid="stVerticalBlock"] { min-width: 0; }
+.search-results-table { max-width: 100%; overscroll-behavior-x: contain; }
+@media (max-width: 768px) {
+    [data-testid="stMainBlockContainer"], .main .block-container {
+        padding: 3.5rem 0.75rem 1.5rem !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        backdrop-filter: none !important;
+    }
+    [data-testid="stAppViewContainer"] {
+        background-attachment: scroll !important;
+    }
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: 1 1 auto !important;
+    }
+    [data-testid="stSidebar"] {
+        min-width: 0 !important;
+        max-width: 88vw !important;
+    }
+    [data-testid="stSidebarCollapsedControl"] button,
+    [data-testid="stSidebarCollapseButton"] button {
+        min-height: 44px !important;
+        min-width: 44px !important;
+    }
+    input, textarea, [data-baseweb="select"] input {
+        font-size: 16px !important;
+    }
+    [data-testid="stButton"] button,
+    [data-testid="stFormSubmitButton"] button,
+    [data-testid="stDownloadButton"] button {
+        min-height: 44px !important;
+        min-width: 0 !important;
+        width: 100% !important;
+        white-space: normal !important;
+    }
+    h1 { font-size: 1.25rem !important; overflow-wrap: anywhere; }
+    h2, h3 { overflow-wrap: anywhere; }
+    .login-spacer { height: 0.5rem !important; min-height: 0 !important; }
+    .st-key-login_panel { max-width: 100%; }
+    .search-results-table {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .search-results-table th, .search-results-table td {
+        padding: 10px 8px;
+        font-size: 0.8rem;
+    }
+    .stTabs [data-baseweb="tab-list"] { overflow-x: auto !important; }
+    .stTabs [data-baseweb="tab"] { flex-shrink: 0; min-height: 44px; }
+    .dash-bar-row { grid-template-columns: minmax(0, 1fr) 44px; }
+    .receipt-frame { max-width: 100%; height: 70vh; min-height: 400px; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BANCO DE DADOS
@@ -2140,9 +2205,8 @@ if not st.session_state["autenticado"]:
     </style>
     """, unsafe_allow_html=True)
 
-    # três colunas — a central tem largura proporcional ao viewport
-    _l, mid, _r = st.columns([1.22, 1, 1.22])
-    with mid:
+    # Container central com largura limitada no desktop e fluida no celular.
+    with st.container(key="login_panel"):
         st.markdown("<div class='login-spacer'></div>", unsafe_allow_html=True)
 
         # ── cartão visual ─────────────────────────────────────────
