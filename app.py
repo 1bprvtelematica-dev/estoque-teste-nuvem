@@ -2,6 +2,7 @@
 import streamlit as st
 import psycopg
 import cloud_db
+import hashlib
 from cloud_db import get_conn, read_sql_query
 import pandas as pd
 import streamlit.components.v1 as components
@@ -993,7 +994,6 @@ def inject_css():
     """, unsafe_allow_html=True)
 
 inject_css()
-st.warning("AMBIENTE DE TESTE — dados independentes do estoque instalado. Use somente cadastros fictícios.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BANCO DE DADOS
@@ -1481,9 +1481,14 @@ def imagem_local_para_data_url(nome_arquivo):
     return f"data:{mime};base64,{enc}"
 
 def salvar_brasao_recibo(uploaded_file):
+    content = uploaded_file.getvalue()
+    digest = hashlib.sha256(content).hexdigest()
+    if st.session_state.get("brasao_upload_digest") == digest:
+        return "imagem do ambiente de teste"
     mime = uploaded_file.type or "image/png"
-    data_url = "data:" + mime + ";base64," + base64.b64encode(uploaded_file.getvalue()).decode()
+    data_url = "data:" + mime + ";base64," + base64.b64encode(content).decode()
     cloud_db.save_setting("brasao_recibo", data_url)
+    st.session_state["brasao_upload_digest"] = digest
     st.session_state["brasao_recibo"] = data_url
     return "imagem do ambiente de teste"
 
@@ -2352,6 +2357,8 @@ with st.sidebar:
                 salvar_brasao_recibo(brasao_file)
                 st.session_state["brasao_recibo"] = imagem_para_data_url(brasao_file)
                 st.success("Imagem carregada para os recibos.")
+            else:
+                st.session_state.pop("brasao_upload_digest", None)
             brasao_atual = brasao_recibo_data_url()
             if brasao_atual and brasao_atual != BRASAO_URL:
                 st.image(brasao_atual, width=92)
@@ -3921,12 +3928,9 @@ elif opcao == "Dashboard":
     st.title("📊 Dashboard Operacional — 1º BPRv")
     conn = get_conn()
     df_grupos = saldo_agrupado_materiais(conn)
-    ti = conn.execute("SELECT COALESCE(SUM(quantidade),0) FROM materiais WHERE entrada_registrada=1").fetchone()[0]
-    ts = conn.execute("SELECT COUNT(*) FROM materiais").fetchone()[0]
+    ti, ts, to, te = cloud_db.dashboard_totals(conn)
     cr = int((df_grupos["Status"] == "CRITICO").sum()) if not df_grupos.empty else 0
     ze = int((df_grupos["Status"] == "ZERADO").sum()) if not df_grupos.empty else 0
-    to = conn.execute("SELECT COALESCE(SUM(quantidade),0) FROM historico WHERE tipo='SAÍDA (CLIENTE)'").fetchone()[0]
-    te = conn.execute("SELECT COALESCE(SUM(quantidade),0) FROM historico WHERE tipo='ENTRADA (FORNECEDOR)'").fetchone()[0]
 
     def dash_metric(col, label, value, delta=None):
         delta_html = f"<p class='dash-metric-delta'>{escape(str(delta))}</p>" if delta else ""

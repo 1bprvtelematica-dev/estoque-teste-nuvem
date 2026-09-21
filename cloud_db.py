@@ -261,9 +261,28 @@ def save_setting(key, value):
     with connection_pool().connection() as raw:
         raw.execute('INSERT INTO configuracoes_teste(chave,valor) VALUES(%s,%s) '
                     'ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor', (key, value))
+    load_setting.clear()
 
 
+@st.cache_data(ttl=60, max_entries=16, show_spinner=False)
 def load_setting(key):
     with connection_pool().connection() as raw:
         row = raw.execute('SELECT valor FROM configuracoes_teste WHERE chave=%s', (key,)).fetchone()
         return row[0] if row else None
+
+
+def dashboard_totals(conn):
+    # Uma consulta e uma varredura por tabela, sem cache de saldos.
+    return conn.execute("""
+        SELECT m.estoque, m.cadastros, h.saidas, h.entradas
+        FROM (
+            SELECT COALESCE(SUM(CASE WHEN entrada_registrada=1 THEN quantidade ELSE 0 END),0) AS estoque,
+                   COUNT(*) AS cadastros
+            FROM materiais
+        ) m
+        CROSS JOIN (
+            SELECT COALESCE(SUM(CASE WHEN tipo='SAÍDA (CLIENTE)' THEN quantidade ELSE 0 END),0) AS saidas,
+                   COALESCE(SUM(CASE WHEN tipo='ENTRADA (FORNECEDOR)' THEN quantidade ELSE 0 END),0) AS entradas
+            FROM historico
+        ) h
+    """).fetchone()
